@@ -11,6 +11,7 @@ This allows the same application codebase, Docker image, and package configurati
 
 This project uses the same Helm chart for all environments, with separate Helm values files for environment-specific configuration:
 
+```text
 helm/web-demo/
 ├── Chart.yaml
 ├── values.yaml
@@ -19,6 +20,7 @@ helm/web-demo/
 ├── values-staging.yaml
 ├── values-production.yaml
 └── templates/
+```
 
 The shared Helm templates contain the common Kubernetes configuration, while each environment-specific values file overrides only the settings that are different.
 
@@ -56,17 +58,21 @@ The same pipeline can support different environments by selecting the correspond
 
 For example, staging can be deployed with:
 
+```bash
 helm upgrade --install web-demo-staging ./helm/web-demo \
   -f ./helm/web-demo/values-staging.yaml \
   --set image.repository="${ECR_REPOSITORY}" \
   --set image.tag="${IMAGE_TAG}"
+```
 
 Production can use the same Helm chart with:
 
+```bash
 helm upgrade --install web-demo-production ./helm/web-demo \
   -f ./helm/web-demo/values-production.yaml \
   --set image.repository="${ECR_REPOSITORY}" \
   --set image.tag="${IMAGE_TAG}"
+```
 
 Therefore, the same codebase, Docker image, and Helm chart can be reused across environments, while the values file controls the environment-specific settings.
 
@@ -83,18 +89,22 @@ A GitOps controller such as Argo CD can detect the change and synchronize the co
 
 Example:
 
+```text
 Update staging configuration
 → Merge to Git
 → Argo CD detects the change
 → Argo CD synchronizes EKS
 → Staging environment is updated
+```
 
 The same image can then be promoted through:
 
+```text
 alpha
 → beta
 → staging
 → production
+```
 
 without rebuilding the image for every environment.
 
@@ -105,6 +115,7 @@ In the current implementation, GitHub Actions directly deploys the application t
 
 A future improvement would be to combine the current CI/CD pipeline with GitOps:
 
+```text
 Developer
 → GitHub Actions
 → Build and test
@@ -113,6 +124,7 @@ Developer
 → Update the target environment configuration in Git
 → Argo CD detects the change
 → Argo CD deploys and reconciles the corresponding environment in EKS
+```
 
 In this model, CI/CD handles building and validating the application artifact, while GitOps handles deployment and synchronization of environment-specific configuration.
 
