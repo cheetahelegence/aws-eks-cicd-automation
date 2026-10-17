@@ -1,0 +1,20 @@
+replicaCount: 1
+
+image:
+  repository: ""
+  tag: v2
+  pullPolicy: IfNotPresent
+
+containerPort: 80
+
+service:
+  type: LoadBalancer
+  port: 80
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi

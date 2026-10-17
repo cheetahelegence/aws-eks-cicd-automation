@@ -1,0 +1,160 @@
+name: SRE CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - feature/ci-cd
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  TF_VAR_github_repository_subject: ${{ vars.GITHUB_REPOSITORY_SUBJECT }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Download repository source code to the GitHub Actions runner.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Inspect OIDC claims
+        uses: actions/github-script@v7
+        id: oidc
+        with:
+          script: |
+            const token = await core.getIDToken('sts.amazonaws.com')
+            const payload = JSON.parse(
+              Buffer.from(token.split('.')[1], 'base64url').toString()
+            )
+
+            console.log(`aud=${payload.aud}`)
+            console.log(`sub=${payload.sub}`)
+            console.log(`repository=${payload.repository}`)
+            console.log(`repository_id=${payload.repository_id}`)
+            console.log(`repository_owner=${payload.repository_owner}`)
+            console.log(`repository_owner_id=${payload.repository_owner_id}`)
+            console.log(`ref=${payload.ref}`)
+
+      # 2. Authenticate to AWS through GitHub OIDC.
+      # No long-lived AWS access key is stored in GitHub.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # 3. Install Terraform on the runner.
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      # 4. Get AWS account ID and construct the Terraform state bucket name.
+      - name: Configure Terraform backend variables
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "STATE_BUCKET=aws-eks-cicd-tfstate-${ACCOUNT_ID}" >> "$GITHUB_ENV"
+
+      # 5. Initialize Terraform using the S3 remote backend.
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${STATE_BUCKET}" \
+            -backend-config="key=aws-eks-cicd/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="use_lockfile=true"
+
+      # 6. Check Terraform formatting and configuration.
+      - name: Terraform Validate
+        working-directory: terraform
+        run: |
+          terraform fmt -check
+          terraform validate
+
+      # 7. Show the infrastructure changes Terraform intends to make.
+      - name: Terraform Plan
+        working-directory: terraform
+        run: terraform plan -out=tfplan
+
+      # 8. Apply infrastructure changes automatically.
+      - name: Terraform Apply
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+
+      # 9. Read Terraform outputs needed by later deployment steps.
+      - name: Get Terraform outputs
+        working-directory: terraform
+        run: |
+          echo "ECR_REPOSITORY=$(terraform output -raw ecr_repository_url)" >> "$GITHUB_ENV"
+          echo "EKS_CLUSTER=$(terraform output -raw eks_cluster_name)" >> "$GITHUB_ENV"
+
+      # 10. Authenticate Docker to Amazon ECR.
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 11. Build an AMD64 nginx image and tag it with the Git commit SHA.
+      - name: Build Docker image
+        run: |
+          IMAGE_TAG="sha-${GITHUB_SHA::7}"
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
+
+          docker build \
+            --platform linux/amd64 \
+            -t "${ECR_REPOSITORY}:${IMAGE_TAG}" \
+            ./docker
+
+      # 12. Push the newly built image to ECR.
+      - name: Push Docker image
+        run: |
+          docker push "${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+      # 13. Configure kubectl to communicate with the EKS cluster.
+      - name: Configure EKS kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --region "${AWS_REGION}" \
+            --name "${EKS_CLUSTER}"
+
+      # 14. Install Helm on the GitHub Actions runner.
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      # 15. Deploy the new image to EKS using the existing Helm chart.
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install web-demo ./helm/web-demo \
+            --set image.repository="${ECR_REPOSITORY}" \
+            --set image.tag="${IMAGE_TAG}"
+
+      # 16. Wait until Kubernetes confirms that the Deployment is ready.
+      - name: Wait for deployment
+        run: |
+          kubectl rollout status deployment/web-demo --timeout=5m
+
+      # 17. Verify that the externally exposed nginx service responds correctly.
+      - name: Smoke test
+        run: |
+          LOAD_BALANCER=$(kubectl get service web-demo \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+          echo "Testing http://${LOAD_BALANCER}/hello.txt"
+
+          for i in {1..12}; do
+            RESPONSE=$(curl -s --max-time 10 "http://${LOAD_BALANCER}/hello.txt" || true)
+
+            if [ "$RESPONSE" = "Hello SRE!" ]; then
+              echo "Smoke test passed: Hello SRE!"
+              exit 0
+            fi
+
+            echo "Service not ready yet. Retrying..."
+            sleep 10
+          done
+
+          echo "Smoke test failed."
+          exit 1

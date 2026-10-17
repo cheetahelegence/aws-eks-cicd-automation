@@ -1,0 +1,28 @@
+# macOS
+.DS_Store
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+tfplan
+*.tfplan
+.terraform.lock.hcl
+crash.log
+crash.*.log
+
+# Terraform variable files that may contain sensitive values
+*.tfvars
+!terraform.tfvars.example
+
+# Environment variables / secrets
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.log
