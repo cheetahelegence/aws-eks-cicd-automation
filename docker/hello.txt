@@ -1,1 +1,1 @@
-Hello SRE!
+Hello from Amazon EKS!

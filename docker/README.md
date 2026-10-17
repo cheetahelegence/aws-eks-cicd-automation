@@ -4,7 +4,7 @@ This directory contains the Docker configuration for the customized nginx image 
 
 The image is based on the official nginx Alpine image and includes a static file named hello.txt. The file can be accessed through the /hello.txt path and returns:
 
-Hello SRE!
+Hello from Amazon EKS!
 
 ## Files
 
@@ -35,7 +35,7 @@ curl http://localhost:8080/hello.txt
 
 Expected output:
 
-Hello SRE!
+Hello from Amazon EKS!
 
 Browser:
 
@@ -69,4 +69,4 @@ Dockerfile + hello.txt
 → Docker Image
 → Container
 → localhost:8080/hello.txt
-→ Hello SRE!
+→ Hello from Amazon EKS!
